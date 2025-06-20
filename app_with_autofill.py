@@ -2,65 +2,74 @@
 import streamlit as st
 import pandas as pd
 import joblib
+import numpy as np
 
-# Load model and preprocessing components
+# Load model and preprocessing objects
 model = joblib.load("model.pkl")
 imputer = joblib.load("imputer.pkl")
 scaler = joblib.load("scaler.pkl")
 features = joblib.load("features.pkl")
 
-st.set_page_config(page_title="Metro Station Cost Estimator", layout="wide")
+# Set Streamlit page config
+st.set_page_config(page_title="Metro Station Civil Cost Estimator", layout="wide")
 st.title("🚇 Metro Station Civil Cost Estimator")
 st.markdown("Estimate metro station civil construction cost using 10 key design parameters.")
 
-# Sidebar for station type selection
-st.sidebar.header("📋 Input Parameters")
-station_type = st.sidebar.selectbox("Select Station Type:", ["Custom Input", "Regular", "Terminal", "Interchange"])
+# Station type presets
+station_type = st.sidebar.selectbox("Select Station Type:", ["Regular", "Terminal", "Interchange", "Custom"])
 
-# Autofill presets
 autofill_presets = {
-    "Regular": [1, 1, 3, 1.1, 200, 20, 10, 3, 2, 1],
-    "Terminal": [2, 2, 4, 1.2, 220, 22, 15, 5, 3, 2],
-    "Interchange": [3, 1, 5, 1.3, 250, 25, 20, 4, 4, 3],
-    "Custom Input": [0] * 10
+    "Regular": [1, 1, 3, 100, 150, 20, 15, 5, 2, 1],
+    "Terminal": [2, 2, 4, 110, 180, 25, 18, 6, 2, 2],
+    "Interchange": [3, 3, 5, 120, 200, 30, 20, 7, 3, 3],
+    "Custom": [None] * len(features)
 }
 
-# Collect user input
+# Manual input UI
 user_inputs = {}
+st.sidebar.header("📝 Input Parameters")
 for i, feature in enumerate(features):
     default_val = autofill_presets[station_type][i]
-    user_inputs[feature] = st.sidebar.number_input(
-        label=feature,
-        value=float(default_val),
-        step=1.0
-    )
+    if default_val is not None:
+        user_inputs[feature] = st.sidebar.number_input(label=feature, value=float(default_val), step=1.0)
+    else:
+        user_inputs[feature] = st.sidebar.number_input(label=feature, step=1.0)
 
-# Predict cost based on user input
+# Prediction logic
+def predict_cost(input_dict):
+    df = pd.DataFrame([input_dict])
+    df = df[features]  # Ensure correct column order
+    df_imputed = imputer.transform(df)
+    df_scaled = scaler.transform(df_imputed)
+    prediction = model.predict(df_scaled)[0]
+    return round(prediction, 2)
+
 if st.button("💰 Predict Civil Cost"):
     try:
-        input_df = pd.DataFrame([user_inputs])
-        input_imputed = imputer.transform(input_df)
-        input_scaled = scaler.transform(input_imputed)
-        prediction = model.predict(input_scaled)[0]
-        st.success(f"Estimated Civil Cost: ₹{prediction:,.2f} Cr")
+        cost = predict_cost(user_inputs)
+        st.success(f"Estimated Civil Cost: ₹{cost} Cr")
     except Exception as e:
-        st.error(f"Prediction failed: {e}")
+        st.error(f"Prediction failed: {str(e)}")
 
-# Upload Excel for batch predictions
-st.subheader("📁 Batch Prediction via Excel")
+# Excel batch upload section
+st.markdown("### 📂 Batch Prediction via Excel")
 uploaded_file = st.file_uploader("Upload Excel file with station parameters", type=["xlsx"])
 
-if uploaded_file:
+if uploaded_file is not None:
     try:
-        df = pd.read_excel(uploaded_file)
-        if not set(features).issubset(df.columns):
-            st.error("Uploaded file is missing one or more required columns.")
+        df_excel = pd.read_excel(uploaded_file)
+        missing_cols = [col for col in features if col not in df_excel.columns]
+        if missing_cols:
+            st.error(f"Missing required columns: {missing_cols}")
         else:
-            X_imputed = imputer.transform(df[features])
-            X_scaled = scaler.transform(X_imputed)
-            predictions = model.predict(X_scaled)
-            df["Predicted Civil Cost (₹ Cr)"] = predictions
-            st.dataframe(df)
-            st.download_button("📥 Download Predictions", df.to_csv(index=False), "predicted_costs.csv", "text/csv")
+            df_excel = df_excel[features]
+            df_imputed = imputer.transform(df_excel)
+            df_scaled = scaler.transform(df_imputed)
+            preds = model.predict(df_scaled)
+            df_excel["Predicted Civil Cost (Cr)"] = np.round(preds, 2)
+            st.success("Batch prediction successful!")
+            st.dataframe(df_excel)
+            csv = df_excel.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Download Predictions CSV", csv, "predictions.csv", "text/csv")
     except Exception as e:
         st.error(f"Error processing file: {e}")
